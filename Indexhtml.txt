@@ -1,0 +1,667 @@
+<script>
+    let materials = [];
+    let currentQuoteId = null;
+    let exchangeRates = {
+        USD: 1,
+        EUR: 0.85,
+        GBP: 0.73,
+        CAD: 1.25,
+        AUD: 1.35,
+        JPY: 110.0
+    };
+
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', function() {
+        generateQuoteNumber();
+        setDefaultDates();
+        loadSavedQuotesList();
+        // Start with one material row
+        addMaterial();
+        // Set up currency converter
+        setupCurrencyConverter();
+        
+        // 1. CRITICAL FIX: Run calculation on load to show initial totals
+        calculate(); 
+        
+        // 2. Add event listeners for inputs not easily handled by onchange attribute
+        document.getElementById('rushJob').addEventListener('change', calculate);
+        document.getElementById('taxOnMaterialsOnly').addEventListener('change', calculate);
+        document.getElementById('baseCurrency').addEventListener('change', updateCurrencyRates);
+        document.getElementById('targetCurrency').addEventListener('change', updateCurrencyRates);
+        document.getElementById('exchangeRate').addEventListener('change', updateCurrencyConversion);
+        
+        // Add listeners to text inputs that don't have onchange in HTML
+        document.getElementById('laborHours').addEventListener('input', calculate);
+        document.getElementById('hourlyRate').addEventListener('input', calculate);
+        document.getElementById('materialsMarkup').addEventListener('input', calculate);
+        document.getElementById('overhead').addEventListener('input', calculate);
+        document.getElementById('taxRate').addEventListener('input', calculate);
+        document.getElementById('discountValue').addEventListener('input', calculate);
+    });
+
+    function setupCurrencyConverter() {
+        // Set default target currency to EUR
+        document.getElementById('targetCurrency').value = 'EUR';
+        // Check if EUR exists in rates before setting
+        if (exchangeRates.EUR) {
+            document.getElementById('exchangeRate').value = exchangeRates.EUR.toFixed(4);
+        }
+        updateCurrencyConversion();
+    }
+
+    function updateCurrencyRates() {
+        const baseCurrency = document.getElementById('baseCurrency').value;
+        const targetCurrency = document.getElementById('targetCurrency').value;
+        
+        // For demo purposes, convert through USD
+        if (exchangeRates[baseCurrency] && exchangeRates[targetCurrency]) {
+            const rate = exchangeRates[targetCurrency] / exchangeRates[baseCurrency];
+            document.getElementById('exchangeRate').value = rate.toFixed(4);
+        } else {
+             // Fallback for missing rate
+             document.getElementById('exchangeRate').value = '1.0000';
+        }
+        
+        updateCurrencyConversion();
+    }
+
+    function updateCurrencyConversion() {
+        // Ensure totalEstimate is parsed correctly (removing potential currency symbol)
+        const totalEstimateText = document.getElementById('totalEstimate').textContent;
+        const baseCurrency = document.getElementById('baseCurrency').value;
+        const totalEstimate = parseFloat(totalEstimateText.replace(/[^0-9.-]+/g,"")) || 0;
+        
+        const exchangeRate = parseFloat(document.getElementById('exchangeRate').value) || 1;
+        const targetCurrency = document.getElementById('targetCurrency').value;
+        
+        const convertedTotal = totalEstimate * exchangeRate;
+        
+        // Get currency symbol
+        const currencySymbols = {
+            USD: '$',
+            EUR: '€',
+            GBP: '£',
+            CAD: 'C$',
+            AUD: 'A$',
+            JPY: '¥'
+        };
+        
+        document.getElementById('convertedTotal').textContent = 
+            (currencySymbols[targetCurrency] || '') + convertedTotal.toFixed(2);
+        
+        document.getElementById('conversionNote').textContent = 
+            `1 ${baseCurrency} = ${exchangeRate.toFixed(4)} ${targetCurrency}`;
+    }
+
+    function generateQuoteNumber() {
+        const today = new Date();
+        const quoteNumber = 'Q-' + today.getFullYear() + 
+                          String(today.getMonth() + 1).padStart(2, '0') + 
+                          String(today.getDate()).padStart(2, '0') + 
+                          '-' + Math.floor(1000 + Math.random() * 9000);
+        document.getElementById('quoteNumber').value = quoteNumber;
+        currentQuoteId = quoteNumber;
+    }
+
+    function setDefaultDates() {
+        const today = new Date();
+        const validUntil = new Date();
+        validUntil.setDate(today.getDate() + 30);
+        
+        document.getElementById('quoteDate').value = today.toISOString().split('T')[0];
+        document.getElementById('validUntil').value = validUntil.toISOString().split('T')[0];
+    }
+
+    function addMaterial() {
+        const id = Date.now();
+        materials.push({ 
+            id: id, 
+            item: '', 
+            quantity: 1, 
+            unit: 'yards', 
+            costPerUnit: 0 
+        });
+        renderMaterials();
+        calculate(); // Recalculate after adding material
+    }
+
+    function removeMaterial(id) {
+        materials = materials.filter(m => m.id !== id);
+        renderMaterials();
+        calculate();
+    }
+
+    function updateMaterial(id, field, value) {
+        const material = materials.find(m => m.id == id);
+        if (material) {
+            if (field === 'quantity' || field === 'costPerUnit') {
+                // Ensure the value is a positive number
+                material[field] = Math.max(0, parseFloat(value) || 0);
+            } else {
+                material[field] = value;
+            }
+            calculate();
+        }
+    }
+
+    function renderMaterials() {
+        const container = document.getElementById('materialsContainer');
+        if (materials.length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-center py-4">No materials added. Click "Add Material" to get started.</p>';
+            return;
+        }
+
+        container.innerHTML = materials.map(m => `
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 p-3 bg-gray-50 rounded-lg border border-green-200">
+                <input type="text" 
+                       placeholder="Item name" 
+                       value="${m.item}" 
+                       oninput="updateMaterial(${m.id}, 'item', this.value)"
+                       class="p-2 border-2 border-gray-200 rounded focus:border-green-500 focus:outline-none transition">
+                
+                <input type="number" 
+                       placeholder="Qty" 
+                       value="${m.quantity}"
+                       min="0"
+                       step="0.1"
+                       oninput="updateMaterial(${m.id}, 'quantity', this.value)"
+                       class="p-2 border-2 border-gray-200 rounded focus:border-green-500 focus:outline-none transition">
+                
+                <select onchange="updateMaterial(${m.id}, 'unit', this.value)"
+                        class="p-2 border-2 border-gray-200 rounded focus:border-green-500 focus:outline-none transition">
+                    <option value="yards" ${m.unit === 'yards' ? 'selected' : ''}>yards</option>
+                    <option value="feet" ${m.unit === 'feet' ? 'selected' : ''}>feet</option>
+                    <option value="pieces" ${m.unit === 'pieces' ? 'selected' : ''}>pieces</option>
+                    <option value="rolls" ${m.unit === 'rolls' ? 'selected' : ''}>rolls</option>
+                    <option value="each" ${m.unit === 'each' ? 'selected' : ''}>each</option>
+                    <option value="meters" ${m.unit === 'meters' ? 'selected' : ''}>meters</option>
+                    <option value="sq yards" ${m.unit === 'sq yards' ? 'selected' : ''}>sq yards</option>
+                    <option value="sq feet" ${m.unit === 'sq feet' ? 'selected' : ''}>sq feet</option>
+                </select>
+                
+                <input type="number" 
+                       placeholder="$ per unit" 
+                       value="${m.costPerUnit}"
+                       min="0"
+                       step="0.01"
+                       oninput="updateMaterial(${m.id}, 'costPerUnit', this.value)"
+                       class="p-2 border-2 border-gray-200 rounded focus:border-green-500 focus:outline-none transition">
+                
+                <button onclick="removeMaterial(${m.id})"
+                        class="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition flex items-center justify-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                </button>
+            </div>
+        `).join('');
+    }
+
+    function calculate() {
+        // Calculate raw materials total
+        const rawMaterials = materials.reduce((sum, m) => {
+            return sum + (m.quantity * m.costPerUnit);
+        }, 0);
+
+        // Calculate materials with markup
+        const markup = parseFloat(document.getElementById('materialsMarkup').value) || 0;
+        const materialsWithMarkup = rawMaterials * (1 + markup / 100);
+
+        // Calculate labor
+        const hours = parseFloat(document.getElementById('laborHours').value) || 0;
+        const rate = parseFloat(document.getElementById('hourlyRate').value) || 0;
+        const complexity = document.getElementById('complexity').value;
+        
+        let laborMultiplier = 1;
+        if (complexity === 'Complex (+25%)') laborMultiplier = 1.25;
+        if (complexity === 'Very Complex (+50%)') laborMultiplier = 1.5;
+        
+        const laborTotal = hours * rate * laborMultiplier;
+
+        // Calculate subtotal
+        const subtotal = materialsWithMarkup + laborTotal;
+        
+        // Calculate overhead
+        const overheadPct = parseFloat(document.getElementById('overhead').value) || 0;
+        const overheadTotal = subtotal * (overheadPct / 100);
+
+        // Calculate rush fee
+        const rushJob = document.getElementById('rushJob').checked;
+        const rushFee = rushJob ? subtotal * 0.25 : 0;
+
+        // Calculate discount
+        const discountType = document.getElementById('discountType').value;
+        const discountValue = parseFloat(document.getElementById('discountValue').value) || 0;
+        let discountAmount = 0;
+        
+        if (discountType === 'percentage') {
+            discountAmount = subtotal * (discountValue / 100);
+        } else if (discountType === 'fixed') {
+            discountAmount = Math.min(discountValue, subtotal); // Don't discount more than subtotal
+        }
+
+        // Calculate tax
+        const taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
+        const taxOnMaterialsOnly = document.getElementById('taxOnMaterialsOnly').checked;
+        
+        // Calculate the base for the tax calculation
+        let taxableBase = subtotal + overheadTotal + rushFee - discountAmount;
+        
+        if (taxOnMaterialsOnly) {
+            taxableBase = materialsWithMarkup;
+        }
+        
+        // Ensure taxableBase is not negative (e.g., due to excessive discount)
+        taxableBase = Math.max(0, taxableBase);
+        
+        const taxAmount = taxableBase * (taxRate / 100);
+
+        // Calculate final total
+        const total = subtotal + overheadTotal + rushFee - discountAmount + taxAmount;
+        const deposit = total * 0.5;
+
+        // Update display
+        document.getElementById('rawMaterials').textContent = '$' + rawMaterials.toFixed(2);
+        document.getElementById('materialsWithMarkup').textContent = '$' + materialsWithMarkup.toFixed(2);
+        document.getElementById('laborTotal').textContent = '$' + laborTotal.toFixed(2);
+        document.getElementById('overheadTotal').textContent = '$' + overheadTotal.toFixed(2);
+        document.getElementById('rushFee').textContent = '$' + rushFee.toFixed(2);
+        document.getElementById('discountAmount').textContent = '-$' + discountAmount.toFixed(2);
+        document.getElementById('taxAmount').textContent = '$' + taxAmount.toFixed(2);
+        document.getElementById('totalEstimate').textContent = '$' + total.toFixed(2);
+        document.getElementById('deposit').textContent = '$' + deposit.toFixed(2);
+
+        // Toggle visibility of optional rows
+        document.getElementById('rushFeeRow').classList.toggle('hidden', !rushJob);
+        document.getElementById('rushFeeRow').classList.toggle('flex', rushJob);
+        
+        document.getElementById('discountRow').classList.toggle('hidden', discountAmount === 0);
+        document.getElementById('discountRow').classList.toggle('flex', discountAmount > 0);
+        
+        document.getElementById('taxRow').classList.toggle('hidden', taxAmount === 0);
+        document.getElementById('taxRow').classList.toggle('flex', taxAmount > 0);
+
+        // Update currency conversion
+        updateCurrencyConversion();
+    }
+
+    function getQuoteData() {
+        return {
+            id: currentQuoteId,
+            quoteNumber: document.getElementById('quoteNumber').value,
+            quoteDate: document.getElementById('quoteDate').value,
+            validUntil: document.getElementById('validUntil').value,
+            businessName: document.getElementById('businessName').value,
+            contactName: document.getElementById('contactName').value,
+            businessPhone: document.getElementById('businessPhone').value,
+            businessEmail: document.getElementById('businessEmail').value,
+            clientName: document.getElementById('clientName').value,
+            clientPhone: document.getElementById('clientPhone').value,
+            clientEmail: document.getElementById('clientEmail').value,
+            clientAddress: document.getElementById('clientAddress').value,
+            furnitureType: document.getElementById('furnitureType').value,
+            condition: document.getElementById('condition').value,
+            rushJob: document.getElementById('rushJob').checked,
+            description: document.getElementById('description').value,
+            materials: materials,
+            laborHours: document.getElementById('laborHours').value,
+            hourlyRate: document.getElementById('hourlyRate').value,
+            complexity: document.getElementById('complexity').value,
+            materialsMarkup: document.getElementById('materialsMarkup').value,
+            overhead: document.getElementById('overhead').value,
+            taxRate: document.getElementById('taxRate').value,
+            taxOnMaterialsOnly: document.getElementById('taxOnMaterialsOnly').checked,
+            discountType: document.getElementById('discountType').value,
+            discountValue: document.getElementById('discountValue').value,
+            currency: {
+                base: document.getElementById('baseCurrency').value,
+                target: document.getElementById('targetCurrency').value,
+                rate: parseFloat(document.getElementById('exchangeRate').value) || 1
+            },
+            // CRITICAL: Ensure you parse all calculation values from their display elements
+            calculations: {
+                rawMaterials: parseFloat(document.getElementById('rawMaterials').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                materialsWithMarkup: parseFloat(document.getElementById('materialsWithMarkup').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                laborTotal: parseFloat(document.getElementById('laborTotal').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                overheadTotal: parseFloat(document.getElementById('overheadTotal').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                rushFee: parseFloat(document.getElementById('rushFee').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                // Discount is displayed as '-$X.XX' so we remove the '-' to store a positive number
+                discountAmount: parseFloat(document.getElementById('discountAmount').textContent.replace(/[^0-9.-]+/g,"")) || 0, 
+                taxAmount: parseFloat(document.getElementById('taxAmount').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                totalEstimate: parseFloat(document.getElementById('totalEstimate').textContent.replace(/[^0-9.-]+/g,"")) || 0,
+                deposit: parseFloat(document.getElementById('deposit').textContent.replace(/[^0-9.-]+/g,"")) || 0
+            },
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    function saveQuote() {
+        const quoteData = getQuoteData();
+        const savedQuotes = JSON.parse(localStorage.getItem('upholsteryQuotes')) || {};
+        savedQuotes[quoteData.id] = quoteData;
+        localStorage.setItem('upholsteryQuotes', JSON.stringify(savedQuotes));
+        
+        alert('Quote saved successfully!');
+        loadSavedQuotesList();
+    }
+
+    function loadQuotes() {
+        document.getElementById('savedQuotesSection').classList.remove('hidden');
+    }
+
+    function loadSavedQuotesList() {
+        const savedQuotes = JSON.parse(localStorage.getItem('upholsteryQuotes')) || {};
+        const container = document.getElementById('savedQuotesList');
+        
+        if (Object.keys(savedQuotes).length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-center py-4">No saved quotes found.</p>';
+            return;
+        }
+
+        container.innerHTML = Object.values(savedQuotes).map(quote => `
+            <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-green-200">
+                <div>
+                    <h3 class="font-semibold">${quote.quoteNumber} - ${quote.clientName || 'Unnamed Client'}</h3>
+                    <p class="text-sm text-gray-600">${quote.furnitureType} - $${(quote.calculations.totalEstimate || 0).toFixed(2)}</p>
+                    <p class="text-xs text-gray-500">${new Date(quote.timestamp).toLocaleDateString()}</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="loadQuoteData('${quote.id}')" class="px-3 py-1 earth-green text-white rounded hover:earth-green transition text-sm">
+                        Load
+                    </button>
+                    <button onclick="deleteQuote('${quote.id}')" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition text-sm">
+                        Delete
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function loadQuoteData(quoteId) {
+        const savedQuotes = JSON.parse(localStorage.getItem('upholsteryQuotes')) || {};
+        const quote = savedQuotes[quoteId];
+        
+        if (!quote) {
+            alert('Quote not found!');
+            return;
+        }
+
+        // Load basic info
+        document.getElementById('quoteNumber').value = quote.quoteNumber;
+        document.getElementById('quoteDate').value = quote.quoteDate;
+        document.getElementById('validUntil').value = quote.validUntil;
+        document.getElementById('businessName').value = quote.businessName || '';
+        document.getElementById('contactName').value = quote.contactName || '';
+        document.getElementById('businessPhone').value = quote.businessPhone || '';
+        document.getElementById('businessEmail').value = quote.businessEmail || '';
+        document.getElementById('clientName').value = quote.clientName || '';
+        document.getElementById('clientPhone').value = quote.clientPhone || '';
+        document.getElementById('clientEmail').value = quote.clientEmail || '';
+        document.getElementById('clientAddress').value = quote.clientAddress || '';
+
+        // Load project details
+        document.getElementById('furnitureType').value = quote.furnitureType;
+        document.getElementById('condition').value = quote.condition;
+        document.getElementById('rushJob').checked = quote.rushJob;
+        document.getElementById('description').value = quote.description || '';
+
+        // Load materials
+        materials = quote.materials || [];
+        renderMaterials();
+
+        // Load calculations
+        document.getElementById('laborHours').value = quote.laborHours;
+        document.getElementById('hourlyRate').value = quote.hourlyRate;
+        document.getElementById('complexity').value = quote.complexity;
+        document.getElementById('materialsMarkup').value = quote.materialsMarkup;
+        document.getElementById('overhead').value = quote.overhead;
+        document.getElementById('taxRate').value = quote.taxRate;
+        document.getElementById('taxOnMaterialsOnly').checked = quote.taxOnMaterialsOnly;
+        document.getElementById('discountType').value = quote.discountType;
+        document.getElementById('discountValue').value = quote.discountValue;
+
+        // Load currency settings if available
+        if (quote.currency) {
+            document.getElementById('baseCurrency').value = quote.currency.base;
+            document.getElementById('targetCurrency').value = quote.currency.target;
+            document.getElementById('exchangeRate').value = quote.currency.rate;
+        }
+
+        currentQuoteId = quoteId;
+        calculate();
+        document.getElementById('savedQuotesSection').classList.add('hidden');
+        alert('Quote loaded successfully!');
+    }
+
+    function deleteQuote(quoteId) {
+        if (confirm('Are you sure you want to delete this quote?')) {
+            const savedQuotes = JSON.parse(localStorage.getItem('upholsteryQuotes')) || {};
+            delete savedQuotes[quoteId];
+            localStorage.setItem('upholsteryQuotes', JSON.stringify(savedQuotes));
+            loadSavedQuotesList();
+        }
+    }
+
+    function getQuoteText() {
+        const quoteData = getQuoteData();
+        const calc = quoteData.calculations;
+
+        const materialsList = materials.length > 0 
+            ? materials.map(m => 
+                `${m.item || 'Material'}: ${m.quantity} ${m.unit} @ $${m.costPerUnit.toFixed(2)} = $${(m.quantity * m.costPerUnit).toFixed(2)}`
+              ).join('\n')
+            : 'No materials added';
+
+        // Currency symbols
+        const currencySymbols = {
+            USD: '$',
+            EUR: '€',
+            GBP: '£',
+            CAD: 'C$',
+            AUD: 'A$',
+            JPY: '¥'
+        };
+
+        const baseSymbol = currencySymbols[quoteData.currency.base] || '$';
+        const targetSymbol = currencySymbols[quoteData.currency.target] || '$';
+        
+        // Use the totalEstimate from calculations, which is in the base currency
+        const totalEstimateBase = calc.totalEstimate; 
+        const convertedTotal = totalEstimateBase * quoteData.currency.rate;
+
+        return `═══════════════════════════════════════════════════════
+          UPHOLSTERY QUOTATION
+═══════════════════════════════════════════════════════
+
+${quoteData.businessName || 'Your Business'}
+${quoteData.contactName || 'Contact Person'}
+Phone: ${quoteData.businessPhone || '(555) 000-0000'}
+Email: ${quoteData.businessEmail || 'email@business.com'}
+
+Date: ${new Date(quoteData.quoteDate).toLocaleDateString()}
+Quote #: ${quoteData.quoteNumber}
+Valid Until: ${new Date(quoteData.validUntil).toLocaleDateString()}
+
+───────────────────────────────────────────────────────
+CLIENT INFORMATION
+───────────────────────────────────────────────────────
+Name: ${quoteData.clientName || 'Client Name'}
+Phone: ${quoteData.clientPhone || '(555) 000-0000'}
+Email: ${quoteData.clientEmail || 'client@email.com'}
+Address: ${quoteData.clientAddress || 'Client Address'}
+
+───────────────────────────────────────────────────────
+PROJECT DETAILS
+───────────────────────────────────────────────────────
+Furniture Type: ${quoteData.furnitureType}
+Condition: ${quoteData.condition}
+${quoteData.rushJob ? '⚡ RUSH JOB - 25% Premium Applied' : ''}
+
+Description: ${quoteData.description || 'Project description'}
+
+───────────────────────────────────────────────────────
+MATERIALS BREAKDOWN
+───────────────────────────────────────────────────────
+${materialsList}
+
+Raw Materials Cost:              ${baseSymbol}${calc.rawMaterials.toFixed(2)}
+Materials (with ${quoteData.materialsMarkup}% markup):      ${baseSymbol}${calc.materialsWithMarkup.toFixed(2)}
+
+───────────────────────────────────────────────────────
+LABOR BREAKDOWN
+───────────────────────────────────────────────────────
+Hours: ${quoteData.laborHours}
+Hourly Rate: ${baseSymbol}${quoteData.hourlyRate}/hour
+Complexity: ${quoteData.complexity}
+Labor Total:                     ${baseSymbol}${calc.laborTotal.toFixed(2)}
+
+───────────────────────────────────────────────────────
+COST SUMMARY
+───────────────────────────────────────────────────────
+Subtotal:                        ${baseSymbol}${(calc.materialsWithMarkup + calc.laborTotal).toFixed(2)}
+Overhead (${quoteData.overhead}%):                 ${baseSymbol}${calc.overheadTotal.toFixed(2)}
+${quoteData.rushJob ? `Rush Fee (25%):                  ${baseSymbol}${calc.rushFee.toFixed(2)}` : ''}
+${calc.discountAmount > 0 ? `Discount:                       -${baseSymbol}${calc.discountAmount.toFixed(2)}` : ''}
+${calc.taxAmount > 0 ? `Tax (${quoteData.taxRate}%):                     ${baseSymbol}${calc.taxAmount.toFixed(2)}` : ''}
+
+═══════════════════════════════════════════════════════
+TOTAL ESTIMATE:                  ${baseSymbol}${calc.totalEstimate.toFixed(2)}
+═══════════════════════════════════════════════════════
+
+CURRENCY CONVERSION:
+Total in ${quoteData.currency.target}: ${targetSymbol}${convertedTotal.toFixed(2)}
+Exchange Rate: 1 ${quoteData.currency.base} = ${quoteData.currency.rate.toFixed(4)} ${quoteData.currency.target}
+
+PAYMENT TERMS:
+• 50% deposit required: ${baseSymbol}${calc.deposit.toFixed(2)}
+• Balance due upon completion: ${baseSymbol}${(calc.totalEstimate - calc.deposit).toFixed(2)}
+
+TERMS & CONDITIONS:
+• This quote is valid until ${new Date(quoteData.validUntil).toLocaleDateString()}
+• Final price may vary based on actual materials used and unforeseen repairs
+• Estimated completion time: ${quoteData.rushJob ? '1-2 weeks' : '3-4 weeks'}
+• Client-supplied materials may affect final pricing
+
+Thank you for your business!`;
+    }
+
+    function copyQuote() {
+        const quoteText = getQuoteText();
+        
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(quoteText).then(() => {
+                alert('✅ Quote copied to clipboard! You can now paste it into an email or document.');
+            }).catch(err => {
+                fallbackCopy(quoteText);
+            });
+        } else {
+            fallbackCopy(quoteText);
+        }
+    }
+
+    function fallbackCopy(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            alert('✅ Quote copied to clipboard! You can now paste it into an email or document.');
+        } catch (err) {
+            alert('❌ Copy failed. Please use the "View Full Quote" button instead.');
+        }
+        document.body.removeChild(textarea);
+    }
+
+    function viewQuote() {
+        const quoteText = getQuoteText();
+        const newWindow = window.open('', '_blank');
+        newWindow.document.write(`
+            <html>
+                <head>
+                    <title>Quote Preview - ${document.getElementById('quoteNumber').value}</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; background-color: #fefefe; }
+                        pre { white-space: pre-wrap; font-family: 'Courier New', monospace; background-color: #f9f9f9; padding: 20px; border-radius: 5px; border: 1px solid #ddd; }
+                        @media print { body { margin: 0; } }
+                    </style>
+                </head>
+                <body>
+                    <pre>${quoteText}</pre>
+                    <div style="margin-top: 20px; text-align: center;">
+                        <button onclick="window.print()" style="padding: 10px 20px; background: #2d5016; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
+                            Print Quote
+                        </button>
+                    </div>
+                </body>
+            </html>
+        `);
+        newWindow.document.close();
+    }
+
+    function downloadQuote() {
+        const quoteText = getQuoteText();
+        const clientName = document.getElementById('clientName').value || 'Client';
+        const filename = `Quote_${clientName.replace(/[^a-z0-9]/gi, '_')}_${document.getElementById('quoteNumber').value}.txt`;
+        
+        try {
+            const blob = new Blob([quoteText], {type: 'text/plain;charset=utf-8'});
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            
+            if (isMobile) {
+                const newWindow = window.open('', '_blank');
+                if (newWindow) {
+                    newWindow.document.write(`
+                        <html>
+                            <head>
+                                <title>Quote - ${clientName}</title>
+                                <meta name="viewport" content="width=device-width, initial-scale=1">
+                                <style>
+                                    body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
+                                    .header { background: #2d5016; color: white; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+                                </style>
+                            </head>
+                            <body>
+                                <div class="header">
+                                    <strong>Quote Ready!</strong><br>
+                                    Long-press the text below to copy, or use your browser's share button to save or send.
+                                </div>
+                                <pre>${quoteText}</pre>
+                            </body>
+                        </html>
+                    `);
+                    newWindow.document.close();
+                    alert('✅ Quote opened in new tab! Long-press to copy or share.');
+                }
+            } else {
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                link.style.display = 'none';
+                
+                document.body.appendChild(link);
+                link.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+                
+                alert('✅ Quote downloaded! Check your Downloads folder for:\n' + filename);
+            }
+        } catch (error) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(quoteText).then(() => {
+                    alert('⚠️ Download failed, but quote was copied to clipboard!\nPaste it into a document to save.');
+                }).catch(() => {
+                    alert('❌ Download failed. Please use the "Copy to Clipboard" button instead.');
+                });
+            } else {
+                alert('❌ Download failed. Please use the "Copy to Clipboard" button instead.');
+            }
+        }
+    }
+</script>
